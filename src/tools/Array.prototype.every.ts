@@ -1,5 +1,11 @@
 if (!Array.prototype.every) {
-    Array.prototype.every = function (callbackfn: any, thisArg: any) {
+
+    type ArrayPredicate<S> = (value: any, index: number, array: any[]) => value is S;
+
+    Array.prototype.every = function <S>(
+        callbackfn: ArrayPredicate<S>,
+        thisArg?: any
+    ): this is S[] {
         "use strict";
         var T, k;
 
