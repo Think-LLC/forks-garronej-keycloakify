@@ -99,7 +99,7 @@
         "isomorphic-dompurify": "^2.15.0",
         "lint-staged": "^11.0.0",
         "magic-string": "^0.30.7",
-        "make-fetch-happen": "^11.0.3",
+        "make-fetch-happen": "^14.0.3",
         "powerhooks": "^1.0.19",
         "prettier": "^3.2.5",
         "properties-parser": "^0.3.1",
