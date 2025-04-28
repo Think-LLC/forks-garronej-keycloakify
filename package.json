@@ -1,5 +1,5 @@
 {
-    "name": "keycloakify",
+    "name": "@garronej/keycloakify",
     "version": "11.8.24",
     "description": "Framework to create custom Keycloak UIs",
     "repository": {
@@ -19,9 +19,7 @@
         "build-storybook": "tsx scripts/build-storybook.ts",
         "dump-keycloak-realm": "tsx scripts/dump-keycloak-realm.ts"
     },
-    "bin": {
-        "keycloakify": "dist/bin/main.js"
-    },
+    "bin": "dist/bin/main.js",
     "lint-staged": {
         "*.{ts,tsx,json,md}": [
             "prettier --write"
