@@ -1,6 +1,6 @@
-import * as child_process from "child_process";
-import * as fs from "fs";
-import { exclude } from "tsafe/exclude";
+import child_process from "child_process";
+import fs from "fs";
+import path from "path";
 
 export type FetchOptionsLike = {
     proxy: string | undefined;
@@ -10,110 +10,117 @@ export type FetchOptionsLike = {
     ca: string[] | undefined;
 };
 
+// Config cache
+const configCache = new Map<string, string | undefined>();
+
+function findUpSync(filenames: string[], cwd: string): string | undefined {
+    let current = path.resolve(cwd);
+    while (true) {
+        for (const filename of filenames) {
+            if (fs.existsSync(path.join(current, filename))) {
+                return current;
+            }
+        }
+
+        const parent = path.dirname(current);
+
+        if (parent === current) {
+            // reached filesystem root
+            return undefined;
+        }
+
+        current = parent;
+    }
+}
+
+function detectYarn(cwd: string): boolean {
+    const yarnRoot = findUpSync([".yarnrc.yml", ".yarn", ".pnp.cjs"], cwd);
+    return yarnRoot !== undefined;
+}
+
 export function getProxyFetchOptions(params: {
     npmConfigGetCwd: string;
 }): FetchOptionsLike {
     const { npmConfigGetCwd } = params;
 
-    const cfg = (() => {
-        const output = child_process
-            .execSync("npm config get", {
-                cwd: npmConfigGetCwd
-            })
-            .toString("utf8");
+    // Detect Yarn once
+    const isYarn = detectYarn(npmConfigGetCwd);
 
-        return output
-            .split("\n")
-            .filter(line => !line.startsWith(";"))
-            .map(line => line.trim())
-            .map(line => {
-                const [key, value] = line.split("=");
-                if (key === undefined) {
-                    return undefined;
-                }
-                if (value === undefined) {
-                    return undefined;
-                }
-                return [key.trim(), value.trim()] as const;
-            })
-            .filter(exclude(undefined))
-            .filter(([key]) => key !== "")
-            .map(([key, value]) => {
-                if (value.startsWith('"') && value.endsWith('"')) {
-                    return [key, value.slice(1, -1)] as const;
-                }
+    /**
+     * Reads the npm/yarn config for a given key.
+     * @param key The config key to read.
+     * @returns The value of the config key, or undefined if not found.
+     */
+    function readConfig(key: string): string | undefined {
+        if (configCache.has(key)) {
+            return configCache.get(key);
+        }
 
-                if (value === "true" || value === "false") {
-                    return [key, value] as const;
-                }
+        try {
+            const command = isYarn ? `yarn config get ${key}` : `npm config get ${key}`;
 
-                return undefined;
-            })
-            .filter(exclude(undefined))
-            .reduce(
-                (cfg: Record<string, string | string[]>, [key, value]) =>
-                    key in cfg
-                        ? { ...cfg, [key]: [...ensureArray(cfg[key]), value] }
-                        : { ...cfg, [key]: value },
-                {}
-            );
+            let value: string | undefined = child_process
+                .execSync(command, { cwd: npmConfigGetCwd })
+                .toString("utf8")
+                .trim();
+
+            if (isYarn) {
+                value = value.replace(/^"(.*)"$/, "$1"); // remove surrounding quotes for Yarn
+            }
+
+            if (value === "undefined" || value === "null") {
+                value = undefined;
+            }
+
+            configCache.set(key, value);
+            return value;
+        } catch {
+            configCache.set(key, undefined);
+            return undefined;
+        }
+    }
+
+    const proxy = readConfig("https-proxy") || readConfig("proxy");
+
+    const noProxy = (readConfig("noproxy") || readConfig("no-proxy"))?.split(",") || [];
+
+    const strictSSL = readConfig("strict-ssl") === "true";
+
+    const cert = readConfig("cert");
+
+    const ca = (() => {
+        const caValue = readConfig("ca");
+        const caArray = caValue ? [caValue] : [];
+        return caArray;
     })();
 
-    const proxy = ensureSingleOrNone(cfg["https-proxy"] ?? cfg["proxy"]);
-
-    const noProxy = cfg["noproxy"] ?? cfg["no-proxy"];
-
-    const strictSSL = ensureSingleOrNone(cfg["strict-ssl"]) === "true";
-
-    const cert = cfg["cert"];
-
-    const ca = ensureArray(cfg["ca"] ?? cfg["ca[]"]);
-
-    const cafile = ensureSingleOrNone(cfg["cafile"]);
+    const cafile = readConfig("cafile");
 
     if (cafile !== undefined) {
-        ca.push(
-            ...(() => {
-                const cafileContent = fs.readFileSync(cafile).toString("utf8");
+        try {
+            const cafileContent = fs.readFileSync(cafile).toString("utf8");
 
-                const newLinePlaceholder = "NEW_LINE_PLACEHOLDER_xIsPsK23svt";
+            const newLinePlaceholder = "NEW_LINE_PLACEHOLDER_xIsPsK23svt";
 
-                const chunks = <T>(arr: T[], size: number = 2) =>
-                    arr
-                        .map((_, i) => i % size == 0 && arr.slice(i, i + size))
-                        .filter(Boolean) as T[][];
+            const chunks = <T>(arr: T[], size: number = 2) =>
+                arr
+                    .map((_, i) => i % size == 0 && arr.slice(i, i + size))
+                    .filter(Boolean) as T[][];
 
-                return chunks(cafileContent.split(/(-----END CERTIFICATE-----)/), 2).map(
-                    ca =>
-                        ca
+            ca.push(
+                ...chunks(cafileContent.split(/(-----END CERTIFICATE-----)/), 2).map(
+                    caChunk =>
+                        caChunk
                             .join("")
                             .replace(/\r?\n/g, newLinePlaceholder)
                             .replace(new RegExp(`^${newLinePlaceholder}`), "")
                             .replace(new RegExp(newLinePlaceholder, "g"), "\\n")
-                );
-            })()
-        );
+                )
+            );
+        } catch (err) {
+            // Ignore errors
+        }
     }
 
-    return {
-        proxy,
-        noProxy,
-        strictSSL,
-        cert,
-        ca: ca.length === 0 ? undefined : ca
-    };
-}
-
-function ensureArray<T>(arg0: T | T[]) {
-    return Array.isArray(arg0) ? arg0 : arg0 === undefined ? [] : [arg0];
-}
-
-function ensureSingleOrNone<T>(arg0: T | T[]) {
-    if (!Array.isArray(arg0)) return arg0;
-    if (arg0.length === 0) return undefined;
-    if (arg0.length === 1) return arg0[0];
-    throw new Error(
-        "Illegal configuration, expected a single value but found multiple: " +
-            arg0.map(String).join(", ")
-    );
+    return { proxy, noProxy, strictSSL, cert, ca: ca.length === 0 ? undefined : ca };
 }

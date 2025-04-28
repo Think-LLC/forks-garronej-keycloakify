@@ -1,5 +1,5 @@
 import * as fs from "fs";
-import { join as pathJoin, basename as pathBasename, dirname as pathDirname } from "path";
+import { join as pathJoin, basename as pathBasename, dirname as pathDirname, relative as pathRelative } from "path";
 import { assert } from "tsafe/assert";
 import { run } from "../shared/run";
 import { cacheDirPath as cacheDirPath_base } from "../shared/cacheDirPath";
@@ -67,9 +67,7 @@ export function vendorFrontendDependencies(params: { distDirPath: string }) {
                 )
             );
 
-            run(`npx webpack --config ${pathBasename(webpackConfigJsFilePath)}`, {
-                cwd: pathDirname(webpackConfigJsFilePath)
-            });
+            run(`npx webpack --config ${pathRelative(process.cwd(), webpackConfigJsFilePath)}`);
 
             fs.readdirSync(webpackOutputDirPath)
                 .filter(fileBasename => !fileBasename.endsWith(".txt"))
